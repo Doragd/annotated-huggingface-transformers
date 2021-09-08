@@ -139,44 +139,62 @@ ACT2FN = {"gelu": gelu, "relu": torch.nn.functional.relu, "swish": swish, "gelu_
 
 BertLayerNorm = torch.nn.LayerNorm
 
-
-class BertEmbeddings(nn.Module):
-    """Construct the embeddings from word, position and token_type embeddings.
-    """
-
+class BertEembeddings(nn.Module):
     def __init__(self, config):
         super().__init__()
+        # 注意：word_embedding_dim = hidden_dim
+        # 注意bert词表里面pad是0号位的
+        # word embeddings
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
+        # position embeddings
+        # 没有transformer那种位置编码，直接是可学习的词嵌入矩阵
+        # 位置id: 0 1 2 3 ...
+        # 注意有个最大位置长度的参数: max_position_embeddings, 其实就是bert的最大序列长度
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        # token type embeddings
+        # 实际就是segment，用于分割两个句子的标识
+        # 注意这里有个参数叫做type_vocab_size，估计就是指有多少类型的句子
+        # 0号句子: 000000.. 1号句子: 11111...
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
-
-        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
-        # any TensorFlow checkpoint file
+        # BertLayerNorm就是nn.LayerNorm，接受的输入是hidden size和eps(就是防止分母为0的情况)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        # dropout，注意layer norm和dropput的先后次序
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None):
+        """
+        token type ids: (batch_size, max_length) 上面说了，就是分割句子的标识
+        position ids: (batch_size, max_length) 这里很简单，就是01234这种
+        inputs_embeds: 有这个参数，主要是为了可以传入外部的词嵌入编码
+        :return embeddings: (batch_size, max_length, hidden_size) 
+        """
         if input_ids is not None:
             input_shape = input_ids.size()
         else:
             input_shape = inputs_embeds.size()[:-1]
-
         seq_length = input_shape[1]
         device = input_ids.device if input_ids is not None else inputs_embeds.device
+        # 其实position_ids没有特殊操作的时候，可以直接不传进去，在内部去定义
         if position_ids is None:
+            # (seq_length) ==> (1, seq_length) ==> (batch_size, seq_length)
             position_ids = torch.arange(seq_length, dtype=torch.long, device=device)
             position_ids = position_ids.unsqueeze(0).expand(input_shape)
+        # 对于输入单句的时候，这个参数也不用传，但是不传不意味着里面没有
+        # 如果没传的话，实际内部会帮你定义好这个嵌入
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+
 
         if inputs_embeds is None:
             inputs_embeds = self.word_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
-
+        
+        # 三个嵌入直接相加，然后先过layernorm，再过dropout，注意次序
         embeddings = inputs_embeds + position_embeddings + token_type_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
+
         return embeddings
 
 
